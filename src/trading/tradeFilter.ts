@@ -155,6 +155,11 @@ export class TradeFilter {
     });
   }
 
+  getWalletBuyCount(tokenMint: string): number {
+    const wallets = this.walletBuys.get(tokenMint);
+    return wallets ? wallets.length : 0;
+  }
+
   cleanupOldData(): void {
     const now = Date.now();
     const maxAge = 30 * 60 * 1000;

@@ -72,12 +72,28 @@ export class PositionManager {
     }
   }
 
+  async triggerWalletSell(tokenMint: string, walletAddress: string): Promise<void> {
+    const position = this.getPositionByToken(tokenMint);
+    if (!position || position.status === PositionStatus.CLOSED) return;
+
+    log.trade(
+      `WALLET SELL COPY: ${position.tokenSymbol} — tracked wallet ${shortenAddress(walletAddress)} sold, we sell too`
+    );
+    await this.executeSell(position, 100, `Copy wallet sell (${shortenAddress(walletAddress)})`);
+    position.status = PositionStatus.CLOSED;
+  }
+
   private async checkPosition(position: OpenPosition): Promise<void> {
     let currentPrice: number;
     if (config.paperTrading.enabled) {
-      const drift = (Math.random() - 0.45) * 0.3;
-      currentPrice = position.currentPrice * (1 + drift);
-      if (currentPrice <= 0) currentPrice = position.entryPrice * 0.01;
+      const realPrice = await getTokenPrice(position.tokenMint);
+      if (realPrice > 0) {
+        currentPrice = realPrice;
+      } else {
+        const drift = (Math.random() - 0.45) * 0.15;
+        currentPrice = position.currentPrice * (1 + drift);
+        if (currentPrice <= 0) currentPrice = position.entryPrice * 0.01;
+      }
     } else {
       currentPrice = await getTokenPrice(position.tokenMint);
       if (currentPrice <= 0) return;

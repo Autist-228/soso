@@ -135,8 +135,9 @@ class SmartCopyTradeBot {
       const existingPosition = this.positionManager.getPositionByToken(trade.tokenMint);
       if (existingPosition) {
         log.trade(
-          `Tracked wallet ${triggerWallet.tier} selling ${trade.tokenMint.slice(0, 8)}... — watching position`
+          `Tracked wallet ${triggerWallet.tier} selling ${trade.tokenMint.slice(0, 8)}... — COPY SELL triggered`
         );
+        await this.positionManager.triggerWalletSell(trade.tokenMint, trade.wallet);
       }
       return;
     }
@@ -158,7 +159,17 @@ class SmartCopyTradeBot {
     const signal = filterResult.signal;
     const bankState = this.riskManager.getBankState();
 
-    const positionSol = (signal.suggestedPositionPct / 100) * bankState.availableSol;
+    let positionPct = signal.suggestedPositionPct;
+    const multiWalletBuys = this.tradeFilter.getWalletBuyCount(signal.tokenMint);
+    if (multiWalletBuys >= 3) {
+      positionPct = Math.min(positionPct * 2.0, config.trading.maxPositionPct);
+      log.trade(`MULTI-WALLET BOOST: ${multiWalletBuys} wallets bought ${signal.tokenInfo.symbol}, position x2`);
+    } else if (multiWalletBuys >= 2) {
+      positionPct = Math.min(positionPct * 1.5, config.trading.maxPositionPct);
+      log.trade(`MULTI-WALLET BOOST: ${multiWalletBuys} wallets bought ${signal.tokenInfo.symbol}, position x1.5`);
+    }
+
+    const positionSol = (positionPct / 100) * bankState.availableSol;
     const canTrade = this.riskManager.canTrade(positionSol);
 
     if (!canTrade.allowed) {

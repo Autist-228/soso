@@ -137,14 +137,15 @@ export function getExitStrategy(confidence: TradeConfidence): ExitStrategy {
     case TradeConfidence.NORMAL:
       return {
         profitLadder: [
-          { triggerPct: 30, sellPct: 50, description: "Quick profit" },
-          { triggerPct: 60, sellPct: 50, description: "Full exit" },
+          { triggerPct: 30, sellPct: 30, description: "Quick profit" },
+          { triggerPct: 80, sellPct: 30, description: "Mid profit" },
+          { triggerPct: 200, sellPct: 100, description: "Full exit" },
         ],
         stopLoss: [
           { triggerPct: -10, sellPct: 50, description: "Partial stop loss" },
           { triggerPct: -20, sellPct: 100, description: "Full stop loss" },
         ],
-        trailingStops: [],
+        trailingStops: [{ activateAtPct: 100, stopPct: 20 }],
         maxHoldTime: 6 * 60 * 60 * 1000,
         flatlineTimeout: 2 * 60 * 60 * 1000,
         minLiquidity: 10000,
@@ -153,15 +154,18 @@ export function getExitStrategy(confidence: TradeConfidence): ExitStrategy {
     default:
       return {
         profitLadder: [
-          { triggerPct: 20, sellPct: 100, description: "Quick exit" },
+          { triggerPct: 30, sellPct: 50, description: "Lock half profit" },
+          { triggerPct: 80, sellPct: 30, description: "Take more profit" },
+          { triggerPct: 200, sellPct: 100, description: "Moon exit" },
         ],
         stopLoss: [
-          { triggerPct: -10, sellPct: 100, description: "Full stop loss" },
+          { triggerPct: -15, sellPct: 50, description: "Partial stop loss" },
+          { triggerPct: -25, sellPct: 100, description: "Full stop loss" },
         ],
-        trailingStops: [],
-        maxHoldTime: 2 * 60 * 60 * 1000,
-        flatlineTimeout: 1 * 60 * 60 * 1000,
-        minLiquidity: 10000,
+        trailingStops: [{ activateAtPct: 50, stopPct: 25 }],
+        maxHoldTime: 4 * 60 * 60 * 1000,
+        flatlineTimeout: 2 * 60 * 60 * 1000,
+        minLiquidity: 5000,
       };
   }
 }
