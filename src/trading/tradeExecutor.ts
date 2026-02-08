@@ -1,7 +1,7 @@
 import { RocketSignal, OpenPosition, PositionStatus, TradeLog } from "../types";
 import { config } from "../config";
 import { buySol } from "../utils/jupiter";
-import { getBalanceSol, shortenAddress } from "../utils/solana";
+import { getBalanceSol } from "../utils/solana";
 import { createLogger } from "../utils/logger";
 
 const log = createLogger("TradeExecutor");
@@ -25,15 +25,19 @@ export class TradeExecutor {
       return null;
     }
 
-    const balance = await getBalanceSol();
-    if (balance < positionSol + 0.01) {
-      log.warn(`Insufficient balance: ${balance} SOL, need ${positionSol + 0.01} SOL`);
-      return null;
-    }
-
     this.pendingTrades.set(tokenMint, signal);
 
     try {
+      if (config.paperTrading.enabled) {
+        return this.executePaperBuy(signal, positionSol);
+      }
+
+      const balance = await getBalanceSol();
+      if (balance < positionSol + 0.01) {
+        log.warn(`Insufficient balance: ${balance} SOL, need ${positionSol + 0.01} SOL`);
+        return null;
+      }
+
       log.trade(
         `Executing BUY: ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore} | ${signal.confidence}`
       );
@@ -78,6 +82,38 @@ export class TradeExecutor {
     } finally {
       this.pendingTrades.delete(tokenMint);
     }
+  }
+
+  private executePaperBuy(signal: RocketSignal, positionSol: number): OpenPosition {
+    const fakeTokenAmount = positionSol * 1_000_000;
+    const fakePrice = positionSol / fakeTokenAmount;
+
+    log.trade(
+      `[PAPER] BUY: ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore} | ${signal.confidence}`
+    );
+
+    return {
+      id: `paper_${Date.now()}_${signal.tokenMint.slice(0, 8)}`,
+      tokenMint: signal.tokenMint,
+      tokenSymbol: signal.tokenInfo.symbol,
+      entryPrice: fakePrice,
+      currentPrice: fakePrice,
+      entryAmountSol: positionSol,
+      remainingTokens: fakeTokenAmount,
+      initialTokens: fakeTokenAmount,
+      totalSoldSol: 0,
+      pnlPct: 0,
+      pnlSol: 0,
+      rocketScore: signal.rocketScore,
+      confidence: signal.confidence,
+      peakPrice: fakePrice,
+      trailingStopActive: false,
+      trailingStopPct: 0,
+      partialSells: [],
+      entryTimestamp: Date.now(),
+      triggerWallet: signal.buyingWallets[0]?.address || "unknown",
+      status: PositionStatus.ACTIVE,
+    };
   }
 
   createTradeLog(

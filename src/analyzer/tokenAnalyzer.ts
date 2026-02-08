@@ -134,6 +134,9 @@ export class TokenAnalyzer {
   }
 
   private async checkHoneypot(tokenMint: string): Promise<boolean> {
+    if (config.paperTrading.enabled) {
+      return false;
+    }
     try {
       const result = await simulateSell(tokenMint, 1000000);
       if (!result.canSell) {
@@ -184,7 +187,7 @@ export class TokenAnalyzer {
 
   shouldSkipToken(tokenInfo: TokenInfo): { skip: boolean; reason: string } {
     if (tokenInfo.isHoneypot) return { skip: true, reason: "Honeypot detected" };
-    if (tokenInfo.liquidity < 1000) return { skip: true, reason: "Liquidity too low" };
+    if (!config.paperTrading.enabled && tokenInfo.liquidity < 1000) return { skip: true, reason: "Liquidity too low" };
     if (tokenInfo.buyTax > 15) return { skip: true, reason: `Buy tax too high: ${tokenInfo.buyTax}%` };
     if (tokenInfo.sellTax > 15) return { skip: true, reason: `Sell tax too high: ${tokenInfo.sellTax}%` };
     if (tokenInfo.topHoldersPct > 70) return { skip: true, reason: "Top holders own >70%" };

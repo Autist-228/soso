@@ -48,9 +48,14 @@ export const config = {
     privateKey: optionalEnv("WALLET_PRIVATE_KEY", ""),
   },
 
+  paperTrading: {
+    enabled: optionalEnv("PAPER_TRADING", "false") === "true",
+    fakeBalanceSol: parseFloat(optionalEnv("PAPER_BALANCE_SOL", "1.14")),
+  },
+
   trading: {
-    bankSizeSol: parseFloat(optionalEnv("BANK_SIZE_SOL", "0.1")),
-    maxPositionPct: parseFloat(optionalEnv("MAX_POSITION_PCT", "15")),
+    bankSizeSol: parseFloat(optionalEnv("BANK_SIZE_SOL", "1.14")),
+    maxPositionPct: parseFloat(optionalEnv("MAX_POSITION_PCT", "5")),
     maxOpenPositions: parseInt(optionalEnv("MAX_OPEN_POSITIONS", "10")),
     dailyLossLimitPct: parseFloat(optionalEnv("DAILY_LOSS_LIMIT_PCT", "20")),
     minRocketScore: parseInt(optionalEnv("MIN_ROCKET_SCORE", "40")),

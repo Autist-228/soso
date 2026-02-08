@@ -26,6 +26,10 @@ export class RiskManager {
   }
 
   async syncBalance(): Promise<void> {
+    if (config.paperTrading.enabled) {
+      log.info(`[PAPER] Balance: ${this.bank.totalSol.toFixed(4)} SOL (available: ${this.bank.availableSol.toFixed(4)} SOL)`);
+      return;
+    }
     try {
       const balance = await getBalanceSol();
       this.bank.totalSol = balance;

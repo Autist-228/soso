@@ -5,7 +5,7 @@ import {
   ExitStrategy,
   TradeLog,
 } from "../types";
-import { getExitStrategy } from "../config";
+import { getExitStrategy, config } from "../config";
 import { sellToken, getTokenPrice } from "../utils/jupiter";
 import { createLogger } from "../utils/logger";
 import { shortenAddress } from "../utils/solana";
@@ -73,8 +73,15 @@ export class PositionManager {
   }
 
   private async checkPosition(position: OpenPosition): Promise<void> {
-    const currentPrice = await getTokenPrice(position.tokenMint);
-    if (currentPrice <= 0) return;
+    let currentPrice: number;
+    if (config.paperTrading.enabled) {
+      const drift = (Math.random() - 0.45) * 0.3;
+      currentPrice = position.currentPrice * (1 + drift);
+      if (currentPrice <= 0) currentPrice = position.entryPrice * 0.01;
+    } else {
+      currentPrice = await getTokenPrice(position.tokenMint);
+      if (currentPrice <= 0) return;
+    }
 
     position.currentPrice = currentPrice;
     position.pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
@@ -191,9 +198,18 @@ export class PositionManager {
     if (tokensToSell <= 0) return;
 
     try {
-      const result = await sellToken(position.tokenMint, tokensToSell);
+      let soldSol: number;
+      let signature: string;
 
-      const soldSol = result.outputAmount / 1e9;
+      if (config.paperTrading.enabled) {
+        soldSol = tokensToSell * position.currentPrice;
+        signature = `paper_${Date.now()}`;
+        log.trade(`[PAPER] SELL: ${position.tokenSymbol} | ${sellPct}% | ${soldSol.toFixed(4)} SOL | ${reason}`);
+      } else {
+        const result = await sellToken(position.tokenMint, tokensToSell);
+        soldSol = result.outputAmount / 1e9;
+        signature = result.signature;
+      }
       position.remainingTokens -= tokensToSell;
       position.totalSoldSol += soldSol;
 
@@ -230,7 +246,7 @@ export class PositionManager {
         triggerWallet: position.triggerWallet,
         reason,
         timestamp: Date.now(),
-        signature: result.signature,
+        signature,
       };
 
       for (const callback of this.onTradeLogCallbacks) {

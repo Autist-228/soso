@@ -11,12 +11,17 @@ type TradeCallback = (trade: WalletTrade) => void;
 export class RealtimeMonitor {
   private ws: WebSocket | null = null;
   private subscribedWallets: Map<string, TrackedWallet> = new Map();
+  private subscriptionToWallet: Map<number, string> = new Map();
+  private pendingSubscriptions: Map<number, string> = new Map();
+  private nextRequestId = 100;
   private onTradeCallbacks: TradeCallback[] = [];
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 2000;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
+  private lastFetchTime: Map<string, number> = new Map();
+  private fetchCooldownMs = 3000;
 
   onTrade(callback: TradeCallback): void {
     this.onTradeCallbacks.push(callback);
@@ -98,9 +103,12 @@ export class RealtimeMonitor {
   private subscribeToWallet(address: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
+    const requestId = this.nextRequestId++;
+    this.pendingSubscriptions.set(requestId, address);
+
     const subscribeMsg = {
       jsonrpc: "2.0",
-      id: 1,
+      id: requestId,
       method: "accountSubscribe",
       params: [
         address,
@@ -132,6 +140,15 @@ export class RealtimeMonitor {
     try {
       const message = JSON.parse(data.toString());
 
+      if (message.id && message.result !== undefined) {
+        const walletAddr = this.pendingSubscriptions.get(message.id);
+        if (walletAddr) {
+          this.subscriptionToWallet.set(message.result, walletAddr);
+          this.pendingSubscriptions.delete(message.id);
+          log.debug(`Subscription ${message.result} mapped to ${shortenAddress(walletAddr)}`);
+        }
+      }
+
       if (message.method === "accountNotification") {
         this.processAccountNotification(message);
       }
@@ -157,25 +174,35 @@ export class RealtimeMonitor {
 
     if (!msg.params?.result?.value) return;
 
-    for (const [address, wallet] of this.subscribedWallets) {
-      try {
-        const recentTrades = await this.fetchRecentTrades(address);
-        for (const trade of recentTrades) {
-          log.trade(
-            `[${wallet.tier}] ${shortenAddress(address)} ${trade.type.toUpperCase()} ${trade.amountSol.toFixed(4)} SOL of ${shortenAddress(trade.tokenMint)}`
-          );
+    const subId = msg.params?.subscription;
+    const walletAddress = subId !== undefined ? this.subscriptionToWallet.get(subId) : undefined;
 
-          for (const callback of this.onTradeCallbacks) {
-            try {
-              callback(trade);
-            } catch (err) {
-              log.error(`Trade callback error: ${err}`);
-            }
+    if (!walletAddress) return;
+
+    const wallet = this.subscribedWallets.get(walletAddress);
+    if (!wallet) return;
+
+    const lastFetch = this.lastFetchTime.get(walletAddress) || 0;
+    if (Date.now() - lastFetch < this.fetchCooldownMs) return;
+    this.lastFetchTime.set(walletAddress, Date.now());
+
+    try {
+      const recentTrades = await this.fetchRecentTrades(walletAddress);
+      for (const trade of recentTrades) {
+        log.trade(
+          `[${wallet.tier}] ${shortenAddress(walletAddress)} ${trade.type.toUpperCase()} ${trade.amountSol.toFixed(4)} SOL of ${shortenAddress(trade.tokenMint)}`
+        );
+
+        for (const callback of this.onTradeCallbacks) {
+          try {
+            callback(trade);
+          } catch (err) {
+            log.error(`Trade callback error: ${err}`);
           }
         }
-      } catch {
-        continue;
       }
+    } catch {
+      return;
     }
   }
 

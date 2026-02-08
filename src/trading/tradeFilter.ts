@@ -102,7 +102,7 @@ export class TradeFilter {
       safetyScore
     );
 
-    if (signal.confidence === TradeConfidence.SKIP) {
+    if (signal.confidence === TradeConfidence.SKIP && !config.paperTrading.enabled) {
       return {
         shouldTrade: false,
         signal,
@@ -118,7 +118,7 @@ export class TradeFilter {
       };
     }
 
-    if (tokenInfo.liquidity < 5000 && signal.confidence !== TradeConfidence.ROCKET) {
+    if (!config.paperTrading.enabled && tokenInfo.liquidity < 5000 && signal.confidence !== TradeConfidence.ROCKET) {
       return {
         shouldTrade: false,
         signal,
