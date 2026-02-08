@@ -11,7 +11,14 @@ export class TokenAnalyzer {
   private tokenCache: Map<string, { info: TokenInfo; timestamp: number }> = new Map();
   private cacheTtlMs = 5 * 60 * 1000;
 
+  private static readonly SOL_MINT = "So11111111111111111111111111111111111111112";
+  private static readonly USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
   async analyzeToken(tokenMint: string): Promise<TokenInfo | null> {
+    if (tokenMint === TokenAnalyzer.SOL_MINT || tokenMint === TokenAnalyzer.USDC_MINT) {
+      return null;
+    }
+
     const cached = this.tokenCache.get(tokenMint);
     if (cached && Date.now() - cached.timestamp < this.cacheTtlMs) {
       return cached.info;
@@ -44,10 +51,6 @@ export class TokenAnalyzer {
               info {
                 name
                 symbol
-                decimals
-              }
-              explorerData {
-                blueCheckmark
               }
             }
             filterPairs(
@@ -56,11 +59,7 @@ export class TokenAnalyzer {
             ) {
               results {
                 liquidity
-                volumeUSD24
-                priceUSD
                 pair { address }
-                token0 { address name symbol }
-                token1 { address name symbol }
               }
             }
           }`,
@@ -77,13 +76,11 @@ export class TokenAnalyzer {
       const tokenData = response.data?.data?.token;
       const pairData = response.data?.data?.filterPairs?.results?.[0];
 
-      if (!tokenData?.info) return null;
-
       const tokenInfo: TokenInfo = {
         mint: tokenMint,
-        symbol: tokenData.info.symbol || "UNKNOWN",
-        name: tokenData.info.name || "Unknown Token",
-        decimals: tokenData.info.decimals || 9,
+        symbol: tokenData?.info?.symbol || "UNKNOWN",
+        name: tokenData?.info?.name || "Unknown Token",
+        decimals: 9,
         lpBurned: false,
         mintDisabled: false,
         buyTax: 0,
@@ -102,13 +99,37 @@ export class TokenAnalyzer {
         },
         uniqueBuyers1h: 0,
         buyToSellRatio: 0,
-        volumeUsd1h: pairData?.volumeUSD24 ? pairData.volumeUSD24 / 24 : 0,
+        volumeUsd1h: 0,
       };
 
       return tokenInfo;
     } catch (err) {
       log.warn(`Codex token fetch failed for ${shortenAddress(tokenMint)}: ${err}`);
-      return null;
+      return {
+        mint: tokenMint,
+        symbol: "UNKNOWN",
+        name: "Unknown Token",
+        decimals: 9,
+        lpBurned: false,
+        mintDisabled: false,
+        buyTax: 0,
+        sellTax: 0,
+        topHoldersPct: 0,
+        liquidity: 0,
+        age: 0,
+        isHoneypot: false,
+        devAddress: "",
+        devHistory: {
+          address: "",
+          previousTokens: [],
+          hasRugPull: false,
+          hasSuccessfulProject: false,
+          bestMultiplier: 0,
+        },
+        uniqueBuyers1h: 0,
+        buyToSellRatio: 0,
+        volumeUsd1h: 0,
+      };
     }
   }
 

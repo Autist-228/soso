@@ -15,8 +15,9 @@ interface TwitterSearchResult {
   text: string;
   author: {
     userName: string;
-    followerCount: number;
+    followers: number;
     isVerified: boolean;
+    isBlueVerified: boolean;
   };
   createdAt: string;
 }
@@ -152,10 +153,10 @@ export class TwitterMonitor {
 
     const mention: TwitterMention = {
       username: tweet.author.userName,
-      followers: tweet.author.followerCount,
+      followers: tweet.author.followers || 0,
       text: tweet.text,
       timestamp: new Date(tweet.createdAt).getTime(),
-      isInfluencer: isInfluencer || tweet.author.followerCount > 50000,
+      isInfluencer: isInfluencer || (tweet.author.followers || 0) > 50000,
     };
 
     for (const tokenMint of tokenAddresses) {

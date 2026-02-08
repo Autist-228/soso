@@ -184,11 +184,12 @@ export class RealtimeMonitor {
 
     try {
       const response = await fetch(
-        `${config.helius.apiUrl}/addresses/${walletAddress}/transactions/?api-key=${config.helius.apiKey}&limit=5`,
+        `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=${config.helius.apiKey}&limit=5`,
         { signal: AbortSignal.timeout(10000) }
       );
 
-      const transactions = (await response.json()) as Array<{
+      const rawData = await response.json();
+      const transactions = Array.isArray(rawData) ? rawData as Array<{
         type: string;
         source: string;
         timestamp: number;
@@ -204,7 +205,7 @@ export class RealtimeMonitor {
           toUserAccount: string;
           amount: number;
         }>;
-      }>;
+      }> : [];
 
       for (const tx of transactions) {
         if (tx.type !== "SWAP") continue;

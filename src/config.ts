@@ -62,7 +62,7 @@ export const config = {
 
   crawler: {
     scanIntervalMs: 60_000,
-    minTradesForScoring: 20,
+    minTradesForScoring: 3,
     minWinRate: 0.4,
     topWalletsCount: 50,
     walletRefreshIntervalMs: 24 * 60 * 60 * 1000,

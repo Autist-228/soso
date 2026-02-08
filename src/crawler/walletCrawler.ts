@@ -130,11 +130,12 @@ export class WalletCrawler {
 
     try {
       const response = await axios.get(
-        `${config.helius.apiUrl}/transactions/?api-key=${config.helius.apiKey}`,
+        `https://api.helius.xyz/v0/addresses/JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4/transactions`,
         {
           params: {
+            "api-key": config.helius.apiKey,
             type: "SWAP",
-            source: "JUPITER",
+            limit: 100,
           },
           timeout: 15000,
         }
@@ -156,10 +157,11 @@ export class WalletCrawler {
         config.codex.apiUrl,
         {
           query: `{
-            getLatestTokens(limit: 50, networkId: 1399811149) {
-              items {
-                address
-                creatorAddress
+            filterTokens(filters: { network: [1399811149] }, limit: 50) {
+              results {
+                token { address name symbol }
+                liquidity
+                priceUSD
               }
             }
           }`,
@@ -173,12 +175,8 @@ export class WalletCrawler {
         }
       );
 
-      const tokens = response.data?.data?.getLatestTokens?.items || [];
-      for (const token of tokens) {
-        if (token.creatorAddress) {
-          walletSet.add(token.creatorAddress);
-        }
-      }
+      const results = response.data?.data?.filterTokens?.results || [];
+      log.info(`Codex returned ${results.length} tokens`);
     } catch (err) {
       log.warn(`Codex token scan failed: ${err}`);
     }
@@ -189,9 +187,9 @@ export class WalletCrawler {
   private async getWalletTransactions(address: string): Promise<HeliusTransaction[]> {
     try {
       const response = await axios.get(
-        `${config.helius.apiUrl}/addresses/${address}/transactions/?api-key=${config.helius.apiKey}`,
+        `https://api.helius.xyz/v0/addresses/${address}/transactions`,
         {
-          params: { limit: 100 },
+          params: { "api-key": config.helius.apiKey, limit: 100 },
           timeout: 15000,
         }
       );
