@@ -30,7 +30,7 @@ export class TokenAnalyzer {
       const tokenInfo = await this.fetchTokenData(tokenMint);
       if (!tokenInfo) return null;
 
-      const honeypotCheck = await this.checkHoneypot(tokenMint);
+      const honeypotCheck = await this.checkHoneypot(tokenMint, tokenInfo);
       tokenInfo.isHoneypot = honeypotCheck;
 
       this.tokenCache.set(tokenMint, { info: tokenInfo, timestamp: Date.now() });
@@ -52,6 +52,8 @@ export class TokenAnalyzer {
                 name
                 symbol
               }
+              holders
+              marketCap
             }
             filterPairs(
               filters: { tokenAddress: "${tokenMint}", network: [1399811149] }
@@ -59,7 +61,11 @@ export class TokenAnalyzer {
             ) {
               results {
                 liquidity
+                priceUSD
                 pair { address }
+                uniqueBuyers24
+                uniqueSellers24
+                volumeUSD24
               }
             }
           }`,
@@ -75,6 +81,13 @@ export class TokenAnalyzer {
 
       const tokenData = response.data?.data?.token;
       const pairData = response.data?.data?.filterPairs?.results?.[0];
+
+      const holders = tokenData?.holders || 0;
+      const marketCap = tokenData?.marketCap || 0;
+      const priceUsd = pairData?.priceUSD || 0;
+      const uniqueBuyers = pairData?.uniqueBuyers24 || 0;
+      const uniqueSellers = pairData?.uniqueSellers24 || 1;
+      const volumeUsd = pairData?.volumeUSD24 || 0;
 
       const tokenInfo: TokenInfo = {
         mint: tokenMint,
@@ -97,10 +110,17 @@ export class TokenAnalyzer {
           hasSuccessfulProject: false,
           bestMultiplier: 0,
         },
-        uniqueBuyers1h: 0,
-        buyToSellRatio: 0,
-        volumeUsd1h: 0,
+        uniqueBuyers1h: uniqueBuyers,
+        buyToSellRatio: uniqueSellers > 0 ? uniqueBuyers / uniqueSellers : 0,
+        volumeUsd1h: volumeUsd,
+        holderCount: holders,
+        marketCapUsd: marketCap,
+        priceUsd: priceUsd,
       };
+
+      if (holders > 0) {
+        log.info(`Token ${tokenInfo.symbol}: ${holders} holders, $${marketCap.toFixed(0)} mcap, $${(pairData?.liquidity || 0).toFixed(0)} liq`);
+      }
 
       return tokenInfo;
     } catch (err) {
@@ -129,28 +149,51 @@ export class TokenAnalyzer {
         uniqueBuyers1h: 0,
         buyToSellRatio: 0,
         volumeUsd1h: 0,
+        holderCount: 0,
+        marketCapUsd: 0,
+        priceUsd: 0,
       };
     }
   }
 
-  private async checkHoneypot(tokenMint: string): Promise<boolean> {
-    if (config.paperTrading.enabled) {
-      return false;
-    }
+  private async checkHoneypot(tokenMint: string, tokenInfo?: TokenInfo): Promise<boolean> {
     try {
       const result = await simulateSell(tokenMint, 1000000);
-      if (!result.canSell) {
-        log.warn(`Token ${shortenAddress(tokenMint)} is a honeypot (cannot sell)`);
-        return true;
+      if (result.canSell) {
+        if (result.priceImpact > 50) {
+          log.warn(`Token ${shortenAddress(tokenMint)} has extreme sell impact: ${result.priceImpact}%`);
+          return true;
+        }
+        return false;
       }
-      if (result.priceImpact > 50) {
-        log.warn(`Token ${shortenAddress(tokenMint)} has extreme sell impact: ${result.priceImpact}%`);
-        return true;
-      }
+    } catch {}
+
+    const isPumpFun = tokenMint.endsWith("pump");
+
+    if (isPumpFun) {
+      log.info(`Token ${shortenAddress(tokenMint)} is pump.fun — allowing (bonding curve sellable)`);
       return false;
-    } catch {
-      return true;
     }
+
+    if (tokenInfo) {
+      const hasLiquidity = tokenInfo.liquidity > 500;
+      const hasBuyers = tokenInfo.uniqueBuyers1h > 3;
+      const hasHolders = tokenInfo.holderCount > 10;
+
+      if (hasLiquidity && (hasBuyers || hasHolders)) {
+        log.info(`Token ${shortenAddress(tokenMint)} has liquidity + activity — allowing despite no Jupiter route`);
+        return false;
+      }
+
+      const codexFailed = tokenInfo.liquidity === 0 && tokenInfo.holderCount === 0 && tokenInfo.uniqueBuyers1h === 0;
+      if (codexFailed) {
+        log.info(`Token ${shortenAddress(tokenMint)} — no API data available, allowing (scoring will handle risk)`);
+        return false;
+      }
+    }
+
+    log.warn(`Token ${shortenAddress(tokenMint)} is a honeypot (cannot sell, has data but no activity)`);
+    return true;
   }
 
   getTokenSafetyScore(tokenInfo: TokenInfo): number {
@@ -187,11 +230,17 @@ export class TokenAnalyzer {
 
   shouldSkipToken(tokenInfo: TokenInfo): { skip: boolean; reason: string } {
     if (tokenInfo.isHoneypot) return { skip: true, reason: "Honeypot detected" };
-    if (!config.paperTrading.enabled && tokenInfo.liquidity < 1000) return { skip: true, reason: "Liquidity too low" };
+
+    const isPumpFun = tokenInfo.mint.endsWith("pump");
+    if (!isPumpFun && tokenInfo.liquidity < 1000) {
+      return { skip: true, reason: `Liquidity too low: $${tokenInfo.liquidity}` };
+    }
+
     if (tokenInfo.buyTax > 15) return { skip: true, reason: `Buy tax too high: ${tokenInfo.buyTax}%` };
     if (tokenInfo.sellTax > 15) return { skip: true, reason: `Sell tax too high: ${tokenInfo.sellTax}%` };
     if (tokenInfo.topHoldersPct > 70) return { skip: true, reason: "Top holders own >70%" };
     if (tokenInfo.devHistory.hasRugPull) return { skip: true, reason: "Dev has rug pull history" };
+    if (tokenInfo.holderCount > 5000) return { skip: true, reason: `Too many holders (${tokenInfo.holderCount}) — move already happened` };
 
     return { skip: false, reason: "" };
   }

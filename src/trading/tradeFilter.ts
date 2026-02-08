@@ -3,6 +3,7 @@ import {
   TradeConfidence,
   WalletTrade,
   TrackedWallet,
+  WalletTier,
   TokenInfo,
   TwitterMention,
 } from "../types";
@@ -61,13 +62,21 @@ export class TradeFilter {
       return { shouldTrade: false, signal: null, rejectReason: "Not a buy" };
     }
 
+    if (triggerWallet.tier !== WalletTier.S && triggerWallet.tier !== WalletTier.A) {
+      return { shouldTrade: false, signal: null, rejectReason: `Wallet tier ${triggerWallet.tier} too low (need S/A)` };
+    }
+
+    if (trade.amountSol < config.trading.minWalletTradeSol) {
+      return { shouldTrade: false, signal: null, rejectReason: `Trade too small: ${trade.amountSol.toFixed(4)} SOL (min ${config.trading.minWalletTradeSol})` };
+    }
+
     const tokenMint = trade.tokenMint;
 
     if (this.isDuplicateSignal(tokenMint)) {
       return { shouldTrade: false, signal: null, rejectReason: "Duplicate signal (cooldown)" };
     }
 
-    log.info(`Evaluating trade: ${shortenAddress(tokenMint)} from ${shortenAddress(trade.wallet)} (${triggerWallet.tier})`);
+    log.info(`Evaluating trade: ${shortenAddress(tokenMint)} from ${shortenAddress(trade.wallet)} (${triggerWallet.tier}) | ${trade.amountSol.toFixed(4)} SOL`);
 
     const tokenInfo = await this.tokenAnalyzer.analyzeToken(tokenMint);
     if (!tokenInfo) {
@@ -99,10 +108,11 @@ export class TradeFilter {
       tokenInfo,
       buyingWallets,
       mentions,
-      safetyScore
+      safetyScore,
+      trade.amountSol
     );
 
-    if (signal.confidence === TradeConfidence.SKIP && !config.paperTrading.enabled) {
+    if (signal.confidence === TradeConfidence.SKIP) {
       return {
         shouldTrade: false,
         signal,
@@ -118,18 +128,21 @@ export class TradeFilter {
       };
     }
 
-    if (!config.paperTrading.enabled && tokenInfo.liquidity < 5000 && signal.confidence !== TradeConfidence.ROCKET) {
+    const isPumpFun = tokenMint.endsWith("pump");
+    if (!isPumpFun && tokenInfo.liquidity < 2000 && signal.confidence !== TradeConfidence.ROCKET) {
       return {
         shouldTrade: false,
         signal,
-        rejectReason: "Low liquidity for non-rocket signal",
+        rejectReason: `Low liquidity ($${tokenInfo.liquidity.toFixed(0)}) for ${signal.confidence} signal`,
       };
     }
 
     this.markSignalSeen(tokenMint);
 
     log.trade(
-      `APPROVED: ${tokenInfo.symbol} | Score: ${signal.rocketScore} | ${signal.confidence} | Position: ${signal.suggestedPositionPct.toFixed(1)}%`
+      `APPROVED: ${tokenInfo.symbol} | Score: ${signal.rocketScore} | ${signal.confidence} | ` +
+      `Holders: ${tokenInfo.holderCount} | MCap: $${tokenInfo.marketCapUsd.toFixed(0)} | ` +
+      `Liq: $${tokenInfo.liquidity.toFixed(0)} | Wallet: ${triggerWallet.tier} bet ${trade.amountSol.toFixed(2)} SOL`
     );
 
     return { shouldTrade: true, signal, rejectReason: "" };

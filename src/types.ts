@@ -41,6 +41,9 @@ export interface TokenInfo {
   uniqueBuyers1h: number;
   buyToSellRatio: number;
   volumeUsd1h: number;
+  holderCount: number;
+  marketCapUsd: number;
+  priceUsd: number;
 }
 
 export interface DevHistory {
@@ -69,6 +72,7 @@ export interface WalletTrade {
   timestamp: number;
   signature: string;
   dex: string;
+  walletTier?: WalletTier;
 }
 
 export interface RocketSignal {

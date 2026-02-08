@@ -10,15 +10,13 @@ export class TradeExecutor {
   private pendingTrades: Map<string, RocketSignal> = new Map();
   private executedSignatures: Set<string> = new Set();
 
-  async executeBuy(signal: RocketSignal, bankAvailableSol: number): Promise<OpenPosition | null> {
+  async executeBuy(signal: RocketSignal, positionSol: number): Promise<OpenPosition | null> {
     const tokenMint = signal.tokenMint;
 
     if (this.pendingTrades.has(tokenMint)) {
       log.warn(`Already pending trade for ${signal.tokenInfo.symbol}`);
       return null;
     }
-
-    const positionSol = (signal.suggestedPositionPct / 100) * bankAvailableSol;
 
     if (positionSol < 0.001) {
       log.warn(`Position too small: ${positionSol} SOL`);

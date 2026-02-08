@@ -36,6 +36,7 @@ interface WalletPnL {
   maxDrawdownPct: number;
   consistency: number;
   avgEntrySpeed: number;
+  avgTradeSizeSol: number;
 }
 
 export class WalletCrawler {
@@ -249,7 +250,12 @@ export class WalletCrawler {
       }
     }
 
-    if (completedTrades < 5) return null;
+    if (completedTrades < 3) return null;
+
+    const allBuySols = trades.filter(t => t.type === "buy").map(t => t.solAmount);
+    const avgTradeSizeSol = allBuySols.length > 0
+      ? allBuySols.reduce((a, b) => a + b, 0) / allBuySols.length
+      : 0;
 
     const winRate = profitableTrades / completedTrades;
     const avgRoi = totalRoiPct / completedTrades;
@@ -277,6 +283,7 @@ export class WalletCrawler {
       maxDrawdownPct: maxDrawdown,
       consistency: Math.min(100, Math.max(0, consistency)),
       avgEntrySpeed,
+      avgTradeSizeSol,
     };
   }
 
@@ -362,13 +369,23 @@ export class WalletCrawler {
     const speedScore = 50;
     const consistencyScore = pnl.consistency;
 
-    const totalScore =
+    let totalScore =
       winRateScore * w.winRate +
       roiScore * w.avgRoi +
       activityScore * w.activity +
       drawdownScore * w.maxDrawdown +
       speedScore * w.entrySpeed +
       consistencyScore * w.consistency;
+
+    if (pnl.avgTradeSizeSol < 0.01) {
+      totalScore *= 0.3;
+    } else if (pnl.avgTradeSizeSol < 0.05) {
+      totalScore *= 0.6;
+    } else if (pnl.avgTradeSizeSol >= 0.5) {
+      totalScore *= 1.2;
+    } else if (pnl.avgTradeSizeSol >= 0.1) {
+      totalScore *= 1.1;
+    }
 
     return Math.min(100, Math.max(0, totalScore));
   }

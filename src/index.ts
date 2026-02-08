@@ -10,9 +10,9 @@ import { PositionManager } from "./trading/positionManager";
 import { RiskManager } from "./trading/riskManager";
 import { TelegramNotifier } from "./notifications/telegramBot";
 import { Analytics } from "./analytics/analytics";
-import { config } from "./config";
+import { config, getFixedPositionSol } from "./config";
 import { createLogger } from "./utils/logger";
-import { WalletTrade, TrackedWallet } from "./types";
+import { WalletTrade, TrackedWallet, WalletTier } from "./types";
 
 const log = createLogger("Main");
 
@@ -151,6 +151,14 @@ class SmartCopyTradeBot {
       return;
     }
 
+    if (triggerWallet.tier !== WalletTier.S && triggerWallet.tier !== WalletTier.A) {
+      return;
+    }
+
+    if (trade.amountSol < config.trading.minWalletTradeSol) {
+      return;
+    }
+
     const existingPos = this.positionManager.getPositionByToken(trade.tokenMint);
     if (existingPos) {
       log.info(`Signal rejected: Already holding ${existingPos.tokenSymbol}`);
@@ -184,17 +192,22 @@ class SmartCopyTradeBot {
     const signal = filterResult.signal;
     const bankState = this.riskManager.getBankState();
 
-    let positionPct = signal.suggestedPositionPct;
+    let positionSol = getFixedPositionSol(signal.confidence);
+
     const multiWalletBuys = this.tradeFilter.getWalletBuyCount(signal.tokenMint);
     if (multiWalletBuys >= 3) {
-      positionPct = Math.min(positionPct * 2.0, config.trading.maxPositionPct);
+      positionSol = Math.min(positionSol * 2.0, bankState.availableSol * 0.2);
       log.trade(`MULTI-WALLET BOOST: ${multiWalletBuys} wallets bought ${signal.tokenInfo.symbol}, position x2`);
     } else if (multiWalletBuys >= 2) {
-      positionPct = Math.min(positionPct * 1.5, config.trading.maxPositionPct);
+      positionSol = Math.min(positionSol * 1.5, bankState.availableSol * 0.15);
       log.trade(`MULTI-WALLET BOOST: ${multiWalletBuys} wallets bought ${signal.tokenInfo.symbol}, position x1.5`);
     }
 
-    const positionSol = (positionPct / 100) * bankState.availableSol;
+    if (positionSol > bankState.availableSol) {
+      log.warn(`Position ${positionSol.toFixed(4)} SOL exceeds available ${bankState.availableSol.toFixed(4)} SOL`);
+      return;
+    }
+
     const canTrade = this.riskManager.canTrade(positionSol);
 
     if (!canTrade.allowed) {
@@ -206,7 +219,7 @@ class SmartCopyTradeBot {
 
     this.riskManager.lockFunds(positionSol);
 
-    const position = await this.tradeExecutor.executeBuy(signal, bankState.availableSol);
+    const position = await this.tradeExecutor.executeBuy(signal, positionSol);
 
     if (position) {
       this.positionManager.addPosition(position);
@@ -214,12 +227,17 @@ class SmartCopyTradeBot {
       this.tradesThisMinute++;
       await this.telegram.sendBuyNotification(position);
 
+      log.trade(
+        `BOUGHT: ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore} | ${signal.confidence} | ` +
+        `Holders: ${signal.tokenInfo.holderCount} | Wallet: ${triggerWallet.tier} bet ${trade.amountSol.toFixed(2)} SOL`
+      );
+
       const buyLog = this.tradeExecutor.createTradeLog(
         position,
         "buy",
         position.entryAmountSol,
         "",
-        `Score: ${signal.rocketScore} | ${signal.confidence}`
+        `Score: ${signal.rocketScore} | ${signal.confidence} | Holders: ${signal.tokenInfo.holderCount}`
       );
       this.analytics.recordTrade(buyLog);
     } else {

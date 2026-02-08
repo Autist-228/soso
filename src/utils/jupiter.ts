@@ -154,7 +154,35 @@ export async function getTokenPrice(tokenMint: string): Promise<number> {
       { timeout: 5000 }
     );
     const data = response.data?.data?.[tokenMint];
-    return data?.price || 0;
+    if (data?.price && data.price > 0) return data.price;
+  } catch {}
+
+  try {
+    const codexKey = process.env.CODEX_API_KEY;
+    if (!codexKey) return 0;
+    const query = `{ filterPairs(filters: { tokenAddress: "${tokenMint}", network: [1399811149] }, limit: 1) { results { priceUSD } } }`;
+    const resp = await axios.post(
+      "https://graph.codex.io/graphql",
+      { query },
+      { headers: { Authorization: codexKey }, timeout: 8000 }
+    );
+    const priceUsd = resp.data?.data?.filterPairs?.results?.[0]?.priceUSD;
+    if (priceUsd && parseFloat(priceUsd) > 0) {
+      const solPrice = await getSolPrice();
+      return solPrice > 0 ? parseFloat(priceUsd) / solPrice : 0;
+    }
+  } catch {}
+
+  return 0;
+}
+
+async function getSolPrice(): Promise<number> {
+  try {
+    const resp = await axios.get(
+      "https://price.jup.ag/v6/price?ids=So11111111111111111111111111111111111111112",
+      { timeout: 5000 }
+    );
+    return resp.data?.data?.["So11111111111111111111111111111111111111112"]?.price || 0;
   } catch {
     return 0;
   }

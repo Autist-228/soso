@@ -25,10 +25,11 @@ export class RocketDetector {
     tokenInfo: TokenInfo,
     buyingWallets: TrackedWallet[],
     twitterMentions: TwitterMention[],
-    tokenSafetyScore: number
+    tokenSafetyScore: number,
+    walletTradeAmountSol: number = 0
   ): RocketScoreBreakdown {
     const devScore = this.calcDevScore(tokenInfo);
-    const smartMoneyScore = this.calcSmartMoneyScore(buyingWallets);
+    const smartMoneyScore = this.calcSmartMoneyScore(buyingWallets, walletTradeAmountSol);
     const twitterScore = this.calcTwitterScore(twitterMentions);
     const tokenScore = this.calcTokenScore(tokenInfo, tokenSafetyScore);
     const onChainScore = this.calcOnChainScore(tokenInfo);
@@ -61,21 +62,19 @@ export class RocketDetector {
     return Math.max(-20, Math.min(25, score));
   }
 
-  private calcSmartMoneyScore(buyingWallets: TrackedWallet[]): number {
+  private calcSmartMoneyScore(buyingWallets: TrackedWallet[], walletTradeAmountSol: number = 0): number {
     if (buyingWallets.length === 0) return 0;
 
     let score = 0;
 
     const sTier = buyingWallets.filter((w) => w.tier === WalletTier.S);
     const aTier = buyingWallets.filter((w) => w.tier === WalletTier.A);
-    const bTier = buyingWallets.filter((w) => w.tier === WalletTier.B);
 
-    score += sTier.length * 15;
-    score += aTier.length * 8;
-    score += bTier.length * 4;
+    score += sTier.length * 18;
+    score += aTier.length * 10;
 
-    if (sTier.length >= 2) score += 8;
-    if (aTier.length >= 2) score += 5;
+    if (sTier.length >= 2) score += 10;
+    if (aTier.length >= 2) score += 6;
     if (buyingWallets.length >= 3) score += 5;
     if (buyingWallets.length >= 5) score += 5;
 
@@ -87,7 +86,12 @@ export class RocketDetector {
     if (bestWallet.avgRoi > 200) score += 5;
     else if (bestWallet.avgRoi > 100) score += 3;
 
-    return Math.min(40, score);
+    if (walletTradeAmountSol >= 5) score += 8;
+    else if (walletTradeAmountSol >= 1) score += 5;
+    else if (walletTradeAmountSol >= 0.5) score += 3;
+    else if (walletTradeAmountSol >= 0.1) score += 1;
+
+    return Math.min(45, score);
   }
 
   private calcTwitterScore(mentions: TwitterMention[]): number {
@@ -112,16 +116,25 @@ export class RocketDetector {
   private calcTokenScore(tokenInfo: TokenInfo, safetyScore: number): number {
     let score = 0;
 
-    score += Math.floor(safetyScore * 0.15);
+    score += Math.floor(safetyScore * 0.1);
 
-    if (tokenInfo.lpBurned) score += 3;
-    if (tokenInfo.mintDisabled) score += 3;
-    if (tokenInfo.liquidity > 100000) score += 5;
-    else if (tokenInfo.liquidity > 50000) score += 3;
-    else if (tokenInfo.liquidity > 10000) score += 2;
-    if (!tokenInfo.isHoneypot) score += 3;
+    if (tokenInfo.lpBurned) score += 2;
+    if (tokenInfo.mintDisabled) score += 2;
+    if (tokenInfo.liquidity > 100000) score += 3;
+    else if (tokenInfo.liquidity > 50000) score += 2;
+    else if (tokenInfo.liquidity > 10000) score += 1;
+    if (!tokenInfo.isHoneypot) score += 2;
 
-    return Math.min(20, score);
+    if (tokenInfo.holderCount > 0 && tokenInfo.holderCount <= 200) score += 8;
+    else if (tokenInfo.holderCount <= 500) score += 5;
+    else if (tokenInfo.holderCount <= 1000) score += 3;
+    else if (tokenInfo.holderCount > 3000) score -= 3;
+
+    if (tokenInfo.marketCapUsd > 0 && tokenInfo.marketCapUsd < 100000) score += 5;
+    else if (tokenInfo.marketCapUsd < 500000) score += 3;
+    else if (tokenInfo.marketCapUsd > 5000000) score -= 3;
+
+    return Math.min(25, score);
   }
 
   private calcOnChainScore(tokenInfo: TokenInfo): number {
@@ -140,10 +153,10 @@ export class RocketDetector {
   }
 
   scoreToConfidence(score: number): TradeConfidence {
-    if (score >= 75) return TradeConfidence.ROCKET;
-    if (score >= 55) return TradeConfidence.STRONG;
-    if (score >= 35) return TradeConfidence.NORMAL;
-    if (score >= 15) return TradeConfidence.WEAK;
+    if (score >= 70) return TradeConfidence.ROCKET;
+    if (score >= 50) return TradeConfidence.STRONG;
+    if (score >= 30) return TradeConfidence.NORMAL;
+    if (score >= 18) return TradeConfidence.WEAK;
     return TradeConfidence.SKIP;
   }
 
@@ -151,13 +164,15 @@ export class RocketDetector {
     tokenInfo: TokenInfo,
     buyingWallets: TrackedWallet[],
     twitterMentions: TwitterMention[],
-    tokenSafetyScore: number
+    tokenSafetyScore: number,
+    walletTradeAmountSol: number = 0
   ): RocketSignal {
     const breakdown = this.calculateRocketScore(
       tokenInfo,
       buyingWallets,
       twitterMentions,
-      tokenSafetyScore
+      tokenSafetyScore,
+      walletTradeAmountSol
     );
 
     const confidence = this.scoreToConfidence(breakdown.total);
