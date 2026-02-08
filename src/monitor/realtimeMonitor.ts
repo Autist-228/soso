@@ -6,6 +6,12 @@ import { shortenAddress } from "../utils/solana";
 
 const log = createLogger("RealtimeMonitor");
 
+const SKIP_MINTS = new Set([
+  "So11111111111111111111111111111111111111112",
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+]);
+
 type TradeCallback = (trade: WalletTrade) => void;
 
 export class RealtimeMonitor {
@@ -253,7 +259,7 @@ export class RealtimeMonitor {
 
           const solAmount = solTransfer ? Math.abs(solTransfer.amount) / 1e9 : 0;
 
-          if (solAmount > 0) {
+          if (solAmount > 0 && !SKIP_MINTS.has(transfer.mint)) {
             trades.push({
               wallet: walletAddress,
               tokenMint: transfer.mint,

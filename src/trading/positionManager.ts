@@ -14,13 +14,21 @@ const log = createLogger("PositionManager");
 
 type TradeLogCallback = (tradeLog: TradeLog) => void;
 
+type FundsReleaseCallback = (originalAmount: number, returnedAmount: number) => void;
+
 export class PositionManager {
   private positions: Map<string, OpenPosition> = new Map();
   private monitorInterval: ReturnType<typeof setInterval> | null = null;
   private onTradeLogCallbacks: TradeLogCallback[] = [];
+  private onFundsReleaseCallbacks: FundsReleaseCallback[] = [];
+  private priceMomentum: Map<string, number> = new Map();
 
   onTradeLog(callback: TradeLogCallback): void {
     this.onTradeLogCallbacks.push(callback);
+  }
+
+  onFundsRelease(callback: FundsReleaseCallback): void {
+    this.onFundsReleaseCallbacks.push(callback);
   }
 
   addPosition(position: OpenPosition): void {
@@ -90,8 +98,13 @@ export class PositionManager {
       if (realPrice > 0) {
         currentPrice = realPrice;
       } else {
-        const drift = (Math.random() - 0.45) * 0.15;
-        currentPrice = position.currentPrice * (1 + drift);
+        const prevMomentum = this.priceMomentum.get(position.id) || 0;
+        const noise = (Math.random() - 0.5) * 0.03;
+        const meanRevert = -prevMomentum * 0.3;
+        const trend = (Math.random() < 0.55 ? 1 : -1) * 0.005;
+        const momentum = prevMomentum * 0.6 + noise + meanRevert + trend;
+        this.priceMomentum.set(position.id, momentum);
+        currentPrice = position.currentPrice * (1 + momentum);
         if (currentPrice <= 0) currentPrice = position.entryPrice * 0.01;
       }
     } else {
@@ -116,12 +129,24 @@ export class PositionManager {
   }
 
   private async checkStopLoss(position: OpenPosition, strategy: ExitStrategy): Promise<void> {
-    for (const rule of strategy.stopLoss) {
+    if (position.status === PositionStatus.CLOSED) return;
+
+    const sortedRules = [...strategy.stopLoss].sort((a, b) => a.triggerPct - b.triggerPct);
+
+    for (const rule of sortedRules) {
       if (position.pnlPct <= rule.triggerPct) {
-        const alreadySold = position.partialSells.some(
-          (ps) => ps.reason.includes("stop loss") && ps.reason.includes(String(rule.triggerPct))
+        const alreadyHit = position.partialSells.some(
+          (ps) => ps.reason.toLowerCase().includes("stop loss")
         );
-        if (alreadySold) continue;
+
+        if (alreadyHit) {
+          log.warn(
+            `FULL STOP LOSS: ${position.tokenSymbol} still at ${position.pnlPct.toFixed(1)}% after partial stop`
+          );
+          await this.executeSell(position, 100, `Full stop loss at ${position.pnlPct.toFixed(1)}%`);
+          position.status = PositionStatus.CLOSED;
+          return;
+        }
 
         log.warn(
           `STOP LOSS triggered: ${position.tokenSymbol} at ${position.pnlPct.toFixed(1)}% (trigger: ${rule.triggerPct}%)`
@@ -129,10 +154,10 @@ export class PositionManager {
 
         await this.executeSell(position, rule.sellPct, `Stop loss at ${rule.triggerPct}%`);
 
-        if (rule.sellPct >= 100) {
+        if (rule.sellPct >= 100 || position.remainingTokens <= 0) {
           position.status = PositionStatus.CLOSED;
         }
-        break;
+        return;
       }
     }
   }
@@ -211,7 +236,16 @@ export class PositionManager {
     reason: string
   ): Promise<void> {
     const tokensToSell = Math.floor(position.remainingTokens * (sellPct / 100));
-    if (tokensToSell <= 0) return;
+    if (tokensToSell <= 0) {
+      if (position.remainingTokens <= 0) position.status = PositionStatus.CLOSED;
+      return;
+    }
+    const estimatedValue = tokensToSell * position.currentPrice;
+    if (estimatedValue < 0.0001 && sellPct < 100) {
+      log.info(`Dust position ${position.tokenSymbol}, closing fully`);
+      position.status = PositionStatus.CLOSED;
+      return;
+    }
 
     try {
       let soldSol: number;
@@ -249,21 +283,33 @@ export class PositionManager {
         `SELL: ${position.tokenSymbol} | ${sellPct}% | ${soldSol.toFixed(4)} SOL | PnL: ${pnlPct.toFixed(1)}% | ${reason}`
       );
 
+      const proportionSold = tokensToSell / position.initialTokens;
+      const originalCost = position.entryAmountSol * proportionSold;
+      const pnlSol = soldSol - originalCost;
+
       const tradeLog: TradeLog = {
         id: `log_${Date.now()}_${position.tokenMint.slice(0, 8)}`,
         tokenMint: position.tokenMint,
         tokenSymbol: position.tokenSymbol,
-        action: sellPct >= 100 ? "sell" : "partial_sell",
+        action: sellPct >= 100 || position.remainingTokens <= 0 ? "sell" : "partial_sell",
         amountSol: soldSol,
         price: position.currentPrice,
         pnlPct,
-        pnlSol: soldSol - position.entryAmountSol * (sellPct / 100),
+        pnlSol,
         rocketScore: position.rocketScore,
         triggerWallet: position.triggerWallet,
         reason,
         timestamp: Date.now(),
         signature,
       };
+
+      for (const callback of this.onFundsReleaseCallbacks) {
+        try {
+          callback(originalCost, soldSol);
+        } catch (err) {
+          log.error(`Funds release callback error: ${err}`);
+        }
+      }
 
       for (const callback of this.onTradeLogCallbacks) {
         try {

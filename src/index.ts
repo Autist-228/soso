@@ -30,6 +30,9 @@ class SmartCopyTradeBot {
   private telegram: TelegramNotifier;
   private analytics: Analytics;
   private isRunning = false;
+  private lastTradeTimestamp = 0;
+  private tradesThisMinute = 0;
+  private minuteResetTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.crawler = new WalletCrawler();
@@ -88,6 +91,7 @@ class SmartCopyTradeBot {
       `Bank: ${config.trading.bankSizeSol} SOL\nTracking ${topWallets.length} wallets`
     );
 
+    this.minuteResetTimer = setInterval(() => { this.tradesThisMinute = 0; }, 60_000);
     this.startPeriodicTasks();
   }
 
@@ -100,6 +104,7 @@ class SmartCopyTradeBot {
     this.twitter.stop();
     this.positionManager.stopMonitoring();
     this.riskManager.stopDailyReset();
+    if (this.minuteResetTimer) clearInterval(this.minuteResetTimer);
 
     const report = this.analytics.formatReport();
     log.info(report);
@@ -122,6 +127,10 @@ class SmartCopyTradeBot {
       this.analytics.recordTrade(tradeLog);
       this.telegram.sendSellNotification(tradeLog);
     });
+
+    this.positionManager.onFundsRelease((originalAmount, returnedAmount) => {
+      this.riskManager.releaseFunds(originalAmount, returnedAmount);
+    });
   }
 
   private async handleWalletTrade(trade: WalletTrade): Promise<void> {
@@ -142,8 +151,24 @@ class SmartCopyTradeBot {
       return;
     }
 
+    const existingPos = this.positionManager.getPositionByToken(trade.tokenMint);
+    if (existingPos) {
+      log.info(`Signal rejected: Already holding ${existingPos.tokenSymbol}`);
+      return;
+    }
+
     if (this.positionManager.getPositionCount() >= config.trading.maxOpenPositions) {
       log.warn("Max open positions reached, skipping signal");
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastTradeTimestamp < 10_000) {
+      log.info("Signal rejected: Global trade cooldown (10s)");
+      return;
+    }
+    if (this.tradesThisMinute >= 6) {
+      log.info("Signal rejected: Max 6 trades per minute");
       return;
     }
 
@@ -185,6 +210,8 @@ class SmartCopyTradeBot {
 
     if (position) {
       this.positionManager.addPosition(position);
+      this.lastTradeTimestamp = Date.now();
+      this.tradesThisMinute++;
       await this.telegram.sendBuyNotification(position);
 
       const buyLog = this.tradeExecutor.createTradeLog(

@@ -70,17 +70,24 @@ export class RocketDetector {
     const aTier = buyingWallets.filter((w) => w.tier === WalletTier.A);
     const bTier = buyingWallets.filter((w) => w.tier === WalletTier.B);
 
-    score += sTier.length * 10;
-    score += aTier.length * 5;
-    score += bTier.length * 2;
+    score += sTier.length * 15;
+    score += aTier.length * 8;
+    score += bTier.length * 4;
 
-    if (sTier.length >= 2) score += 5;
+    if (sTier.length >= 2) score += 8;
+    if (aTier.length >= 2) score += 5;
+    if (buyingWallets.length >= 3) score += 5;
     if (buyingWallets.length >= 5) score += 5;
 
     const avgWinRate = buyingWallets.reduce((s, w) => s + w.winRate, 0) / buyingWallets.length;
     if (avgWinRate > 0.7) score += 5;
+    else if (avgWinRate > 0.5) score += 3;
 
-    return Math.min(30, score);
+    const bestWallet = buyingWallets.reduce((best, w) => w.avgRoi > best.avgRoi ? w : best, buyingWallets[0]);
+    if (bestWallet.avgRoi > 200) score += 5;
+    else if (bestWallet.avgRoi > 100) score += 3;
+
+    return Math.min(40, score);
   }
 
   private calcTwitterScore(mentions: TwitterMention[]): number {
@@ -105,14 +112,16 @@ export class RocketDetector {
   private calcTokenScore(tokenInfo: TokenInfo, safetyScore: number): number {
     let score = 0;
 
-    score += Math.floor(safetyScore * 0.1);
+    score += Math.floor(safetyScore * 0.15);
 
     if (tokenInfo.lpBurned) score += 3;
     if (tokenInfo.mintDisabled) score += 3;
-    if (tokenInfo.liquidity > 50000) score += 3;
+    if (tokenInfo.liquidity > 100000) score += 5;
+    else if (tokenInfo.liquidity > 50000) score += 3;
+    else if (tokenInfo.liquidity > 10000) score += 2;
     if (!tokenInfo.isHoneypot) score += 3;
 
-    return Math.min(15, score);
+    return Math.min(20, score);
   }
 
   private calcOnChainScore(tokenInfo: TokenInfo): number {
@@ -131,10 +140,10 @@ export class RocketDetector {
   }
 
   scoreToConfidence(score: number): TradeConfidence {
-    if (score >= 80) return TradeConfidence.ROCKET;
-    if (score >= 60) return TradeConfidence.STRONG;
-    if (score >= 40) return TradeConfidence.NORMAL;
-    if (score >= 20) return TradeConfidence.WEAK;
+    if (score >= 75) return TradeConfidence.ROCKET;
+    if (score >= 55) return TradeConfidence.STRONG;
+    if (score >= 35) return TradeConfidence.NORMAL;
+    if (score >= 15) return TradeConfidence.WEAK;
     return TradeConfidence.SKIP;
   }
 

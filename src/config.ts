@@ -137,15 +137,15 @@ export function getExitStrategy(confidence: TradeConfidence): ExitStrategy {
     case TradeConfidence.NORMAL:
       return {
         profitLadder: [
-          { triggerPct: 30, sellPct: 30, description: "Quick profit" },
-          { triggerPct: 80, sellPct: 30, description: "Mid profit" },
-          { triggerPct: 200, sellPct: 100, description: "Full exit" },
+          { triggerPct: 25, sellPct: 40, description: "Quick profit" },
+          { triggerPct: 60, sellPct: 30, description: "Mid profit" },
+          { triggerPct: 150, sellPct: 100, description: "Full exit" },
         ],
         stopLoss: [
-          { triggerPct: -10, sellPct: 50, description: "Partial stop loss" },
+          { triggerPct: -12, sellPct: 50, description: "Partial stop loss" },
           { triggerPct: -20, sellPct: 100, description: "Full stop loss" },
         ],
-        trailingStops: [{ activateAtPct: 100, stopPct: 20 }],
+        trailingStops: [{ activateAtPct: 80, stopPct: 20 }],
         maxHoldTime: 6 * 60 * 60 * 1000,
         flatlineTimeout: 2 * 60 * 60 * 1000,
         minLiquidity: 10000,
@@ -154,15 +154,15 @@ export function getExitStrategy(confidence: TradeConfidence): ExitStrategy {
     default:
       return {
         profitLadder: [
-          { triggerPct: 30, sellPct: 50, description: "Lock half profit" },
-          { triggerPct: 80, sellPct: 30, description: "Take more profit" },
-          { triggerPct: 200, sellPct: 100, description: "Moon exit" },
+          { triggerPct: 20, sellPct: 50, description: "Lock half profit" },
+          { triggerPct: 50, sellPct: 30, description: "Take more profit" },
+          { triggerPct: 150, sellPct: 100, description: "Moon exit" },
         ],
         stopLoss: [
-          { triggerPct: -15, sellPct: 50, description: "Partial stop loss" },
-          { triggerPct: -25, sellPct: 100, description: "Full stop loss" },
+          { triggerPct: -10, sellPct: 50, description: "Partial stop loss" },
+          { triggerPct: -20, sellPct: 100, description: "Full stop loss" },
         ],
-        trailingStops: [{ activateAtPct: 50, stopPct: 25 }],
+        trailingStops: [{ activateAtPct: 40, stopPct: 20 }],
         maxHoldTime: 4 * 60 * 60 * 1000,
         flatlineTimeout: 2 * 60 * 60 * 1000,
         minLiquidity: 5000,
@@ -178,11 +178,13 @@ export function getPositionSizePct(
 
   switch (confidence) {
     case TradeConfidence.ROCKET:
-      return Math.min(maxPct, 10 + (rocketScore - 80) * 0.25);
+      return Math.min(maxPct, 8 + (rocketScore - 75) * 0.2);
     case TradeConfidence.STRONG:
-      return Math.min(maxPct * 0.67, 5 + (rocketScore - 60) * 0.25);
+      return Math.min(maxPct * 0.8, 5 + (rocketScore - 55) * 0.15);
     case TradeConfidence.NORMAL:
-      return Math.min(maxPct * 0.33, 2 + (rocketScore - 40) * 0.15);
+      return Math.min(maxPct * 0.5, 3 + (rocketScore - 35) * 0.1);
+    case TradeConfidence.WEAK:
+      return Math.min(maxPct * 0.3, 2);
     default:
       return 1;
   }
