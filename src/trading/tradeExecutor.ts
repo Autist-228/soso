@@ -82,25 +82,29 @@ export class TradeExecutor {
     }
   }
 
-  private async executePaperBuy(signal: RocketSignal, positionSol: number): Promise<OpenPosition> {
-    const realPrice = await getTokenPrice(signal.tokenMint);
-
-    let entryPrice: number;
-    let tokenAmount: number;
-
-    if (realPrice > 0) {
-      entryPrice = realPrice;
-      tokenAmount = positionSol / realPrice;
-      log.trade(
-        `[PAPER] BUY (REAL $): ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | ${realPrice.toExponential(3)} SOL/tok | Tokens: ${tokenAmount.toFixed(0)} | Score: ${signal.rocketScore} | ${signal.confidence}`
-      );
-    } else {
-      tokenAmount = positionSol * 1_000_000;
-      entryPrice = positionSol / tokenAmount;
-      log.warn(
-        `[PAPER] BUY (NO PRICE): ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore}`
-      );
+  private async executePaperBuy(signal: RocketSignal, positionSol: number): Promise<OpenPosition | null> {
+    const price1 = await getTokenPrice(signal.tokenMint);
+    if (price1 <= 0) {
+      log.warn(`[PAPER] NO PRICE for ${signal.tokenInfo.symbol} — skipping`);
+      return null;
     }
+
+    await new Promise((r) => setTimeout(r, 1500));
+    const price2 = await getTokenPrice(signal.tokenMint);
+    const checkPrice = price2 > 0 ? price2 : price1;
+
+    if (price2 > 0 && price2 < price1 * 0.95) {
+      log.warn(
+        `[PAPER] MOMENTUM REJECT: ${signal.tokenInfo.symbol} | Price dropped ${((1 - price2 / price1) * 100).toFixed(1)}% in 1.5s — skipping`
+      );
+      return null;
+    }
+
+    const entryPrice = checkPrice;
+    const tokenAmount = positionSol / entryPrice;
+    log.trade(
+      `[PAPER] BUY (REAL $): ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | ${entryPrice.toExponential(3)} SOL/tok | Tokens: ${tokenAmount.toFixed(0)} | Score: ${signal.rocketScore} | ${signal.confidence}`
+    );
 
     return {
       id: `paper_${Date.now()}_${signal.tokenMint.slice(0, 8)}`,

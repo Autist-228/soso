@@ -162,8 +162,8 @@ export function getExitStrategy(confidence: TradeConfidence): ExitStrategy {
           { triggerPct: 150, sellPct: 100, description: "Moon exit" },
         ],
         stopLoss: [
-          { triggerPct: -10, sellPct: 50, description: "Partial stop loss" },
-          { triggerPct: -20, sellPct: 100, description: "Full stop loss" },
+          { triggerPct: -8, sellPct: 50, description: "Partial stop loss" },
+          { triggerPct: -15, sellPct: 100, description: "Full stop loss" },
         ],
         trailingStops: [{ activateAtPct: 40, stopPct: 20 }],
         maxHoldTime: 4 * 60 * 60 * 1000,

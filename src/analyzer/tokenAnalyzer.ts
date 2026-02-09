@@ -125,35 +125,95 @@ export class TokenAnalyzer {
       return tokenInfo;
     } catch (err) {
       log.warn(`Codex token fetch failed for ${shortenAddress(tokenMint)}: ${err}`);
-      return {
-        mint: tokenMint,
-        symbol: "UNKNOWN",
-        name: "Unknown Token",
-        decimals: 9,
-        lpBurned: false,
-        mintDisabled: false,
-        buyTax: 0,
-        sellTax: 0,
-        topHoldersPct: 0,
-        liquidity: 0,
-        age: 0,
-        isHoneypot: false,
-        devAddress: "",
-        devHistory: {
-          address: "",
-          previousTokens: [],
-          hasRugPull: false,
-          hasSuccessfulProject: false,
-          bestMultiplier: 0,
-        },
-        uniqueBuyers1h: 0,
-        buyToSellRatio: 0,
-        volumeUsd1h: 0,
-        holderCount: 0,
-        marketCapUsd: 0,
-        priceUsd: 0,
-      };
+      return this.fetchFallbackTokenData(tokenMint);
     }
+  }
+
+  private async fetchFallbackTokenData(tokenMint: string): Promise<TokenInfo> {
+    const base: TokenInfo = {
+      mint: tokenMint,
+      symbol: "UNKNOWN",
+      name: "Unknown Token",
+      decimals: 9,
+      lpBurned: false,
+      mintDisabled: false,
+      buyTax: 0,
+      sellTax: 0,
+      topHoldersPct: 0,
+      liquidity: 0,
+      age: 0,
+      isHoneypot: false,
+      devAddress: "",
+      devHistory: {
+        address: "",
+        previousTokens: [],
+        hasRugPull: false,
+        hasSuccessfulProject: false,
+        bestMultiplier: 0,
+      },
+      uniqueBuyers1h: 0,
+      buyToSellRatio: 0,
+      volumeUsd1h: 0,
+      holderCount: 0,
+      marketCapUsd: 0,
+      priceUsd: 0,
+    };
+
+    if (tokenMint.endsWith("pump")) {
+      try {
+        const resp = await axios.get(
+          `https://frontend-api-v2.pump.fun/coins/${tokenMint}`,
+          { timeout: 5000 }
+        );
+        const d = resp.data;
+        if (d) {
+          base.symbol = d.symbol || base.symbol;
+          base.name = d.name || base.name;
+          base.marketCapUsd = Number(d.usd_market_cap) || 0;
+          base.devAddress = d.creator || "";
+          if (d.virtual_sol_reserves && d.virtual_token_reserves) {
+            const solRes = Number(d.virtual_sol_reserves) / 1e9;
+            base.liquidity = solRes * 2 * 200;
+          }
+          if (d.reply_count !== undefined) {
+            base.uniqueBuyers1h = Math.max(base.uniqueBuyers1h, Number(d.reply_count) || 0);
+          }
+          log.info(`pump.fun data: ${base.symbol} | MCap: $${base.marketCapUsd.toFixed(0)} | Liq: $${base.liquidity.toFixed(0)}`);
+        }
+      } catch {
+        log.warn(`pump.fun API failed for ${shortenAddress(tokenMint)}`);
+      }
+    }
+
+    try {
+      const resp = await axios.get(
+        `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`,
+        { timeout: 8000 }
+      );
+      const pairs = resp.data?.pairs;
+      if (pairs && pairs.length > 0) {
+        const pair = pairs[0];
+        if (pair.baseToken) {
+          base.symbol = pair.baseToken.symbol || base.symbol;
+          base.name = pair.baseToken.name || base.name;
+        }
+        base.liquidity = Math.max(base.liquidity, pair.liquidity?.usd || 0);
+        base.marketCapUsd = Math.max(base.marketCapUsd, pair.marketCap || pair.fdv || 0);
+        base.priceUsd = parseFloat(pair.priceUsd || "0") || base.priceUsd;
+        base.volumeUsd1h = Math.max(base.volumeUsd1h, pair.volume?.h1 || 0);
+        const txns = pair.txns;
+        if (txns?.h1) {
+          base.uniqueBuyers1h = Math.max(base.uniqueBuyers1h, txns.h1.buys || 0);
+          const sells1h = txns.h1.sells || 1;
+          base.buyToSellRatio = sells1h > 0 ? (txns.h1.buys || 0) / sells1h : 0;
+        }
+        log.info(`DexScreener data: ${base.symbol} | MCap: $${base.marketCapUsd.toFixed(0)} | Liq: $${base.liquidity.toFixed(0)} | Vol1h: $${base.volumeUsd1h.toFixed(0)}`);
+      }
+    } catch {
+      log.warn(`DexScreener failed for ${shortenAddress(tokenMint)}`);
+    }
+
+    return base;
   }
 
   private async checkHoneypot(tokenMint: string, tokenInfo?: TokenInfo): Promise<boolean> {

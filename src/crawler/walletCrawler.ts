@@ -11,6 +11,12 @@ const KNOWN_DEX_PROGRAMS = [
   "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
   "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
   "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+];
+
+const PUMP_FUN_PROGRAMS = [
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+  "pumpkinfun1111111111111111111111111111111111",
 ];
 
 interface WalletTradeHistory {
@@ -129,29 +135,39 @@ export class WalletCrawler {
   private async scanDexTransactions(): Promise<string[]> {
     const walletSet = new Set<string>();
 
-    try {
-      const response = await axios.get(
-        `https://api.helius.xyz/v0/addresses/JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4/transactions`,
-        {
-          params: {
-            "api-key": config.helius.apiKey,
-            type: "SWAP",
-            limit: 100,
-          },
-          timeout: 15000,
-        }
-      );
+    const dexPrograms = [
+      "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+    ];
 
-      const transactions: HeliusTransaction[] = response.data || [];
+    for (const program of dexPrograms) {
+      try {
+        const response = await axios.get(
+          `https://api.helius.xyz/v0/addresses/${program}/transactions`,
+          {
+            params: {
+              "api-key": config.helius.apiKey,
+              type: "SWAP",
+              limit: 100,
+            },
+            timeout: 15000,
+          }
+        );
 
-      for (const tx of transactions) {
-        if (tx.feePayer && !this.isKnownProgram(tx.feePayer)) {
-          walletSet.add(tx.feePayer);
+        const transactions: HeliusTransaction[] = response.data || [];
+
+        for (const tx of transactions) {
+          if (tx.feePayer && !this.isKnownProgram(tx.feePayer)) {
+            walletSet.add(tx.feePayer);
+          }
         }
+        log.info(`Scanned ${program.slice(0, 8)}...: ${transactions.length} txs, ${walletSet.size} wallets so far`);
+      } catch (err) {
+        log.warn(`DEX scan for ${program.slice(0, 8)}... failed: ${err}`);
       }
-    } catch (err) {
-      log.warn(`DEX scan via Helius failed, trying alternative: ${err}`);
     }
+
+    await this.scanPumpFunWallets(walletSet);
 
     try {
       const response = await axios.post(
@@ -183,6 +199,40 @@ export class WalletCrawler {
     }
 
     return Array.from(walletSet);
+  }
+
+  private async scanPumpFunWallets(walletSet: Set<string>): Promise<void> {
+    try {
+      const resp = await axios.get(
+        "https://frontend-api-v2.pump.fun/coins/latest",
+        { timeout: 10000 }
+      );
+      const coins = Array.isArray(resp.data) ? resp.data : [];
+      for (const coin of coins.slice(0, 20)) {
+        if (coin.creator && typeof coin.creator === "string") {
+          walletSet.add(coin.creator);
+        }
+      }
+      log.info(`pump.fun latest: ${coins.length} tokens, ${walletSet.size} wallets total`);
+    } catch {
+      log.warn("pump.fun latest scan failed");
+    }
+
+    try {
+      const resp = await axios.get(
+        "https://frontend-api-v2.pump.fun/coins/king-of-the-hill?includeNsfw=false",
+        { timeout: 10000 }
+      );
+      const coins = Array.isArray(resp.data) ? resp.data : [];
+      for (const coin of coins.slice(0, 10)) {
+        if (coin.creator && typeof coin.creator === "string") {
+          walletSet.add(coin.creator);
+        }
+      }
+      log.info(`pump.fun KOTH: ${coins.length} tokens, ${walletSet.size} wallets total`);
+    } catch {
+      log.warn("pump.fun KOTH scan failed");
+    }
   }
 
   private async getWalletTransactions(address: string): Promise<HeliusTransaction[]> {

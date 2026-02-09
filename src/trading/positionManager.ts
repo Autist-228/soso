@@ -54,7 +54,7 @@ export class PositionManager {
     );
   }
 
-  async startMonitoring(intervalMs: number = 5000): Promise<void> {
+  async startMonitoring(intervalMs: number = 2000): Promise<void> {
     log.info(`Starting position monitoring (interval: ${intervalMs}ms)`);
 
     this.monitorInterval = setInterval(() => this.checkAllPositions(), intervalMs);
