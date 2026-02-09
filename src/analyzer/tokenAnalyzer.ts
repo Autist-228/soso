@@ -122,6 +122,22 @@ export class TokenAnalyzer {
         log.info(`Token ${tokenInfo.symbol}: ${holders} holders, $${marketCap.toFixed(0)} mcap, $${(pairData?.liquidity || 0).toFixed(0)} liq`);
       }
 
+      const hasGaps = tokenInfo.holderCount === 0 || tokenInfo.marketCapUsd === 0 || tokenInfo.liquidity === 0;
+      if (hasGaps) {
+        log.info(`Codex returned gaps for ${shortenAddress(tokenMint)} — enriching with fallback`);
+        const fallback = await this.fetchFallbackTokenData(tokenMint);
+        if (fallback.symbol !== "UNKNOWN" && tokenInfo.symbol === "UNKNOWN") tokenInfo.symbol = fallback.symbol;
+        if (fallback.name !== "Unknown Token" && tokenInfo.name === "Unknown Token") tokenInfo.name = fallback.name;
+        if (fallback.holderCount > 0 && tokenInfo.holderCount === 0) tokenInfo.holderCount = fallback.holderCount;
+        if (fallback.marketCapUsd > 0 && tokenInfo.marketCapUsd === 0) tokenInfo.marketCapUsd = fallback.marketCapUsd;
+        if (fallback.liquidity > 0 && tokenInfo.liquidity === 0) tokenInfo.liquidity = fallback.liquidity;
+        if (fallback.volumeUsd1h > 0 && tokenInfo.volumeUsd1h === 0) tokenInfo.volumeUsd1h = fallback.volumeUsd1h;
+        if (fallback.uniqueBuyers1h > 0 && tokenInfo.uniqueBuyers1h === 0) tokenInfo.uniqueBuyers1h = fallback.uniqueBuyers1h;
+        if (fallback.buyToSellRatio > 0 && tokenInfo.buyToSellRatio === 0) tokenInfo.buyToSellRatio = fallback.buyToSellRatio;
+        if (fallback.priceUsd > 0 && tokenInfo.priceUsd === 0) tokenInfo.priceUsd = fallback.priceUsd;
+        if (fallback.devAddress && !tokenInfo.devAddress) tokenInfo.devAddress = fallback.devAddress;
+      }
+
       return tokenInfo;
     } catch (err) {
       log.warn(`Codex token fetch failed for ${shortenAddress(tokenMint)}: ${err}`);

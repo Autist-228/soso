@@ -12,7 +12,8 @@ import { TelegramNotifier } from "./notifications/telegramBot";
 import { Analytics } from "./analytics/analytics";
 import { config, getFixedPositionSol } from "./config";
 import { createLogger } from "./utils/logger";
-import { WalletTrade, TrackedWallet, WalletTier } from "./types";
+import { getTokenPrice } from "./utils/jupiter";
+import { WalletTrade, TrackedWallet, WalletTier, RocketSignal, TradeConfidence } from "./types";
 
 const log = createLogger("Main");
 
@@ -33,6 +34,15 @@ class SmartCopyTradeBot {
   private lastTradeTimestamp = 0;
   private tradesThisMinute = 0;
   private minuteResetTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingSignals: Map<string, {
+    signal: RocketSignal;
+    positionSol: number;
+    initialPrice: number;
+    triggerWallet: TrackedWallet;
+    tradeSol: number;
+    queuedAt: number;
+  }> = new Map();
+  private confirmationTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   constructor() {
     this.crawler = new WalletCrawler();
@@ -193,6 +203,12 @@ class SmartCopyTradeBot {
     }
 
     const signal = filterResult.signal;
+
+    if (signal.confidence === TradeConfidence.WEAK) {
+      log.info(`Signal rejected: WEAK confidence (${signal.rocketScore}) — only NORMAL+ allowed`);
+      return;
+    }
+
     const bankState = this.riskManager.getBankState();
 
     let positionSol = getFixedPositionSol(signal.confidence);
@@ -218,9 +234,97 @@ class SmartCopyTradeBot {
       return;
     }
 
-    await this.telegram.sendSignal(signal);
+    if (this.pendingSignals.has(signal.tokenMint)) {
+      log.info(`Signal already pending confirmation: ${signal.tokenInfo.symbol}`);
+      return;
+    }
+
+    const initialPrice = await getTokenPrice(signal.tokenMint);
+    if (initialPrice <= 0) {
+      log.warn(`No price for ${signal.tokenInfo.symbol} — skipping confirmation queue`);
+      return;
+    }
+
+    this.pendingSignals.set(signal.tokenMint, {
+      signal,
+      positionSol,
+      initialPrice,
+      triggerWallet,
+      tradeSol: trade.amountSol,
+      queuedAt: Date.now(),
+    });
+
+    const confirmDelay = signal.confidence === TradeConfidence.ROCKET ? 10_000
+      : signal.confidence === TradeConfidence.STRONG ? 15_000
+      : 20_000;
+
+    log.info(
+      `QUEUED for confirmation: ${signal.tokenInfo.symbol} | Price: ${initialPrice.toExponential(3)} | ` +
+      `Score: ${signal.rocketScore} | ${signal.confidence} | Checking in ${confirmDelay / 1000}s...`
+    );
+
+    const timer = setTimeout(() => this.confirmAndExecute(signal.tokenMint), confirmDelay);
+    this.confirmationTimers.set(signal.tokenMint, timer);
+  }
+
+  private async confirmAndExecute(tokenMint: string): Promise<void> {
+    const pending = this.pendingSignals.get(tokenMint);
+    this.pendingSignals.delete(tokenMint);
+    this.confirmationTimers.delete(tokenMint);
+
+    if (!pending || !this.isRunning) return;
+
+    const { signal, positionSol, initialPrice, triggerWallet, tradeSol } = pending;
+
+    const currentPrice = await getTokenPrice(tokenMint);
+    if (currentPrice <= 0) {
+      log.warn(`[CONFIRM] No price for ${signal.tokenInfo.symbol} — REJECT`);
+      return;
+    }
+
+    const priceChangePct = ((currentPrice - initialPrice) / initialPrice) * 100;
+    const elapsedSec = Math.round((Date.now() - pending.queuedAt) / 1000);
+
+    const minChangePct = signal.confidence === TradeConfidence.ROCKET ? -3
+      : signal.confidence === TradeConfidence.STRONG ? -3
+      : -2;
+
+    if (priceChangePct < -5) {
+      log.warn(
+        `[CONFIRM] DUMP REJECT ${signal.tokenInfo.symbol}: ${priceChangePct.toFixed(1)}% in ${elapsedSec}s ` +
+        `(${initialPrice.toExponential(3)} → ${currentPrice.toExponential(3)})`
+      );
+      return;
+    }
+
+    if (priceChangePct < minChangePct) {
+      log.warn(
+        `[CONFIRM] REJECT ${signal.tokenInfo.symbol}: ${priceChangePct.toFixed(1)}% in ${elapsedSec}s ` +
+        `(${signal.confidence} needs >${minChangePct}%)`
+      );
+      return;
+    }
+
+    log.trade(
+      `[CONFIRM] ROCKET CONFIRMED: ${signal.tokenInfo.symbol} | ${priceChangePct >= 0 ? "+" : ""}${priceChangePct.toFixed(1)}% in ${elapsedSec}s | ` +
+      `${initialPrice.toExponential(3)} → ${currentPrice.toExponential(3)} | ${signal.confidence} | BUYING!`
+    );
+
+    const existingPos = this.positionManager.getPositionByToken(tokenMint);
+    if (existingPos) {
+      log.info(`[CONFIRM] Already holding ${signal.tokenInfo.symbol} — skip`);
+      return;
+    }
+
+    const bankState = this.riskManager.getBankState();
+    if (positionSol > bankState.availableSol) {
+      log.warn(`[CONFIRM] Insufficient funds for ${signal.tokenInfo.symbol}`);
+      return;
+    }
 
     this.riskManager.lockFunds(positionSol);
+
+    await this.telegram.sendSignal(signal);
 
     const position = await this.tradeExecutor.executeBuy(signal, positionSol);
 
@@ -232,7 +336,8 @@ class SmartCopyTradeBot {
 
       log.trade(
         `BOUGHT: ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore} | ${signal.confidence} | ` +
-        `Holders: ${signal.tokenInfo.holderCount} | Wallet: ${triggerWallet.tier} bet ${trade.amountSol.toFixed(2)} SOL`
+        `Holders: ${signal.tokenInfo.holderCount} | Wallet: ${triggerWallet.tier} bet ${tradeSol.toFixed(2)} SOL | ` +
+        `CONFIRMED ${priceChangePct >= 0 ? "+" : ""}${priceChangePct.toFixed(1)}% in ${elapsedSec}s`
       );
 
       const buyLog = this.tradeExecutor.createTradeLog(
@@ -240,7 +345,7 @@ class SmartCopyTradeBot {
         "buy",
         position.entryAmountSol,
         "",
-        `Score: ${signal.rocketScore} | ${signal.confidence} | Holders: ${signal.tokenInfo.holderCount}`
+        `Score: ${signal.rocketScore} | ${signal.confidence} | Confirmed ${priceChangePct >= 0 ? "+" : ""}${priceChangePct.toFixed(1)}%`
       );
       this.analytics.recordTrade(buyLog);
     } else {
