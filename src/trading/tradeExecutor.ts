@@ -1,6 +1,6 @@
 import { RocketSignal, OpenPosition, PositionStatus, TradeLog } from "../types";
 import { config } from "../config";
-import { buySol } from "../utils/jupiter";
+import { buySol, getTokenPrice } from "../utils/jupiter";
 import { getBalanceSol } from "../utils/solana";
 import { createLogger } from "../utils/logger";
 
@@ -26,9 +26,9 @@ export class TradeExecutor {
     this.pendingTrades.set(tokenMint, signal);
 
     try {
-      if (config.paperTrading.enabled) {
-        return this.executePaperBuy(signal, positionSol);
-      }
+        if (config.paperTrading.enabled) {
+          return await this.executePaperBuy(signal, positionSol);
+        }
 
       const balance = await getBalanceSol();
       if (balance < positionSol + 0.01) {
@@ -82,29 +82,41 @@ export class TradeExecutor {
     }
   }
 
-  private executePaperBuy(signal: RocketSignal, positionSol: number): OpenPosition {
-    const fakeTokenAmount = positionSol * 1_000_000;
-    const fakePrice = positionSol / fakeTokenAmount;
+  private async executePaperBuy(signal: RocketSignal, positionSol: number): Promise<OpenPosition> {
+    const realPrice = await getTokenPrice(signal.tokenMint);
 
-    log.trade(
-      `[PAPER] BUY: ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore} | ${signal.confidence}`
-    );
+    let entryPrice: number;
+    let tokenAmount: number;
+
+    if (realPrice > 0) {
+      entryPrice = realPrice;
+      tokenAmount = positionSol / realPrice;
+      log.trade(
+        `[PAPER] BUY (REAL $): ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | ${realPrice.toExponential(3)} SOL/tok | Tokens: ${tokenAmount.toFixed(0)} | Score: ${signal.rocketScore} | ${signal.confidence}`
+      );
+    } else {
+      tokenAmount = positionSol * 1_000_000;
+      entryPrice = positionSol / tokenAmount;
+      log.warn(
+        `[PAPER] BUY (NO PRICE): ${signal.tokenInfo.symbol} | ${positionSol.toFixed(4)} SOL | Score: ${signal.rocketScore}`
+      );
+    }
 
     return {
       id: `paper_${Date.now()}_${signal.tokenMint.slice(0, 8)}`,
       tokenMint: signal.tokenMint,
       tokenSymbol: signal.tokenInfo.symbol,
-      entryPrice: fakePrice,
-      currentPrice: fakePrice,
+      entryPrice,
+      currentPrice: entryPrice,
       entryAmountSol: positionSol,
-      remainingTokens: fakeTokenAmount,
-      initialTokens: fakeTokenAmount,
+      remainingTokens: tokenAmount,
+      initialTokens: tokenAmount,
       totalSoldSol: 0,
       pnlPct: 0,
       pnlSol: 0,
       rocketScore: signal.rocketScore,
       confidence: signal.confidence,
-      peakPrice: fakePrice,
+      peakPrice: entryPrice,
       trailingStopActive: false,
       trailingStopPct: 0,
       partialSells: [],

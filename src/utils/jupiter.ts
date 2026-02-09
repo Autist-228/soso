@@ -9,6 +9,11 @@ const log = createLogger("Jupiter");
 const JUPITER_API = "https://quote-api.jup.ag/v6";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 
+const priceCache = new Map<string, { price: number; ts: number }>();
+const PRICE_CACHE_TTL = 5000;
+let cachedSolUsd: { price: number; ts: number } | null = null;
+const SOL_CACHE_TTL = 30000;
+
 interface JupiterQuote {
   inputMint: string;
   outputMint: string;
@@ -148,15 +153,92 @@ export async function sellToken(
 }
 
 export async function getTokenPrice(tokenMint: string): Promise<number> {
+  const c = priceCache.get(tokenMint);
+  if (c && Date.now() - c.ts < PRICE_CACHE_TTL) return c.price;
+
+  let price = 0;
+
+  price = await jupiterPrice(tokenMint);
+  if (price > 0) { priceCache.set(tokenMint, { price, ts: Date.now() }); return price; }
+
+  price = await dexScreenerPrice(tokenMint);
+  if (price > 0) { priceCache.set(tokenMint, { price, ts: Date.now() }); return price; }
+
+  if (tokenMint.endsWith("pump")) {
+    price = await pumpFunPrice(tokenMint);
+    if (price > 0) { priceCache.set(tokenMint, { price, ts: Date.now() }); return price; }
+  }
+
+  price = await codexPrice(tokenMint);
+  if (price > 0) { priceCache.set(tokenMint, { price, ts: Date.now() }); return price; }
+
+  return 0;
+}
+
+async function jupiterPrice(tokenMint: string): Promise<number> {
   try {
-    const response = await axios.get(
-      `https://price.jup.ag/v6/price?ids=${tokenMint}`,
+    const resp = await axios.get(
+      `https://api.jup.ag/price/v2?ids=${tokenMint}`,
       { timeout: 5000 }
     );
-    const data = response.data?.data?.[tokenMint];
-    if (data?.price && data.price > 0) return data.price;
+    const raw = resp.data?.data?.[tokenMint]?.price;
+    if (raw && parseFloat(String(raw)) > 0) {
+      const solUsd = await getSolPrice();
+      return solUsd > 0 ? parseFloat(String(raw)) / solUsd : 0;
+    }
   } catch {}
+  return 0;
+}
 
+async function dexScreenerPrice(tokenMint: string): Promise<number> {
+  try {
+    const resp = await axios.get(
+      `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`,
+      { timeout: 8000 }
+    );
+    const pairs = resp.data?.pairs;
+    if (pairs && pairs.length > 0) {
+      const solPair = pairs.find(
+        (p: Record<string, unknown>) => {
+          const qt = p.quoteToken as Record<string, unknown> | undefined;
+          return qt && (qt.symbol === "SOL" || qt.symbol === "WSOL");
+        }
+      );
+      const pair = solPair || pairs[0];
+      if (solPair && typeof pair.priceNative === "string" && parseFloat(pair.priceNative) > 0) {
+        return parseFloat(pair.priceNative as string);
+      }
+      if (typeof pair.priceUsd === "string" && parseFloat(pair.priceUsd) > 0) {
+        const solUsd = await getSolPrice();
+        return solUsd > 0 ? parseFloat(pair.priceUsd as string) / solUsd : 0;
+      }
+    }
+  } catch {}
+  return 0;
+}
+
+async function pumpFunPrice(tokenMint: string): Promise<number> {
+  try {
+    const resp = await axios.get(
+      `https://frontend-api-v2.pump.fun/coins/${tokenMint}`,
+      { timeout: 5000 }
+    );
+    const d = resp.data;
+    if (d?.virtual_sol_reserves && d?.virtual_token_reserves) {
+      const solRes = Number(d.virtual_sol_reserves) / 1e9;
+      const tokRes = Number(d.virtual_token_reserves) / 1e6;
+      if (tokRes > 0) return solRes / tokRes;
+    }
+    if (d?.usd_market_cap && d?.total_supply) {
+      const pUsd = Number(d.usd_market_cap) / (Number(d.total_supply) / 1e6);
+      const solUsd = await getSolPrice();
+      return solUsd > 0 ? pUsd / solUsd : 0;
+    }
+  } catch {}
+  return 0;
+}
+
+async function codexPrice(tokenMint: string): Promise<number> {
   try {
     const codexKey = process.env.CODEX_API_KEY;
     if (!codexKey) return 0;
@@ -168,24 +250,39 @@ export async function getTokenPrice(tokenMint: string): Promise<number> {
     );
     const priceUsd = resp.data?.data?.filterPairs?.results?.[0]?.priceUSD;
     if (priceUsd && parseFloat(priceUsd) > 0) {
-      const solPrice = await getSolPrice();
-      return solPrice > 0 ? parseFloat(priceUsd) / solPrice : 0;
+      const solUsd = await getSolPrice();
+      return solUsd > 0 ? parseFloat(priceUsd) / solUsd : 0;
     }
   } catch {}
-
   return 0;
 }
 
 async function getSolPrice(): Promise<number> {
+  if (cachedSolUsd && Date.now() - cachedSolUsd.ts < SOL_CACHE_TTL) {
+    return cachedSolUsd.price;
+  }
+  try {
+    const resp = await axios.get(
+      "https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112",
+      { timeout: 5000 }
+    );
+    const p = parseFloat(resp.data?.data?.["So11111111111111111111111111111111111111112"]?.price || "0");
+    if (p > 0) { cachedSolUsd = { price: p, ts: Date.now() }; return p; }
+  } catch {}
   try {
     const resp = await axios.get(
       "https://price.jup.ag/v6/price?ids=So11111111111111111111111111111111111111112",
       { timeout: 5000 }
     );
-    return resp.data?.data?.["So11111111111111111111111111111111111111112"]?.price || 0;
-  } catch {
-    return 0;
-  }
+    const p = resp.data?.data?.["So11111111111111111111111111111111111111112"]?.price || 0;
+    if (p > 0) { cachedSolUsd = { price: p, ts: Date.now() }; return p; }
+  } catch {}
+  return cachedSolUsd?.price || 0;
+}
+
+export function getPriceSource(tokenMint: string): string {
+  const c = priceCache.get(tokenMint);
+  return (c && Date.now() - c.ts < PRICE_CACHE_TTL) ? "cached" : "none";
 }
 
 export async function simulateSell(

@@ -62,11 +62,17 @@ export class TradeFilter {
       return { shouldTrade: false, signal: null, rejectReason: "Not a buy" };
     }
 
+    const isPumpFun = trade.tokenMint.endsWith("pump");
     if (triggerWallet.tier !== WalletTier.S && triggerWallet.tier !== WalletTier.A) {
-      return { shouldTrade: false, signal: null, rejectReason: `Wallet tier ${triggerWallet.tier} too low (need S/A)` };
+      if (!(isPumpFun && triggerWallet.tier === WalletTier.B && trade.amountSol >= 0.05)) {
+        log.info(`REJECT: ${shortenAddress(trade.tokenMint)} — wallet ${triggerWallet.tier} too low (need S/A, or B with 0.05+ SOL on pump.fun)`);
+        return { shouldTrade: false, signal: null, rejectReason: `Wallet tier ${triggerWallet.tier} too low` };
+      }
+      log.info(`B-tier allowed for pump.fun token: ${shortenAddress(trade.tokenMint)} | ${trade.amountSol.toFixed(4)} SOL`);
     }
 
     if (trade.amountSol < config.trading.minWalletTradeSol) {
+      log.info(`REJECT: ${shortenAddress(trade.tokenMint)} — trade too small: ${trade.amountSol.toFixed(4)} SOL`);
       return { shouldTrade: false, signal: null, rejectReason: `Trade too small: ${trade.amountSol.toFixed(4)} SOL (min ${config.trading.minWalletTradeSol})` };
     }
 
@@ -128,7 +134,6 @@ export class TradeFilter {
       };
     }
 
-    const isPumpFun = tokenMint.endsWith("pump");
     if (!isPumpFun && tokenInfo.liquidity < 2000 && signal.confidence !== TradeConfidence.ROCKET) {
       return {
         shouldTrade: false,

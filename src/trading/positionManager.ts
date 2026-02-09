@@ -92,24 +92,13 @@ export class PositionManager {
   }
 
   private async checkPosition(position: OpenPosition): Promise<void> {
+    const realPrice = await getTokenPrice(position.tokenMint);
     let currentPrice: number;
-    if (config.paperTrading.enabled) {
-      const realPrice = await getTokenPrice(position.tokenMint);
-      if (realPrice > 0) {
-        currentPrice = realPrice;
-      } else {
-        const prevMomentum = this.priceMomentum.get(position.id) || 0;
-        const noise = (Math.random() - 0.5) * 0.03;
-        const meanRevert = -prevMomentum * 0.3;
-        const trend = (Math.random() < 0.55 ? 1 : -1) * 0.005;
-        const momentum = prevMomentum * 0.6 + noise + meanRevert + trend;
-        this.priceMomentum.set(position.id, momentum);
-        currentPrice = position.currentPrice * (1 + momentum);
-        if (currentPrice <= 0) currentPrice = position.entryPrice * 0.01;
-      }
+
+    if (realPrice > 0) {
+      currentPrice = realPrice;
     } else {
-      currentPrice = await getTokenPrice(position.tokenMint);
-      if (currentPrice <= 0) return;
+      return;
     }
 
     position.currentPrice = currentPrice;

@@ -151,8 +151,11 @@ class SmartCopyTradeBot {
       return;
     }
 
+    const isPumpFunToken = trade.tokenMint.endsWith("pump");
     if (triggerWallet.tier !== WalletTier.S && triggerWallet.tier !== WalletTier.A) {
-      return;
+      if (!(isPumpFunToken && triggerWallet.tier === WalletTier.B && trade.amountSol >= 0.05)) {
+        return;
+      }
     }
 
     if (trade.amountSol < config.trading.minWalletTradeSol) {
@@ -273,7 +276,7 @@ class SmartCopyTradeBot {
         `[STATUS] Bank: ${bankState.availableSol.toFixed(4)} SOL | ` +
         `Positions: ${portfolio.openPositions} | ` +
         `PnL: ${bankState.totalPnl >= 0 ? "+" : ""}${bankState.totalPnl.toFixed(4)} SOL | ` +
-        `Wallets: ${crawlerStats.walletsTracked} | ` +
+        `Wallets: ${crawlerStats.walletsTracked} (S:${crawlerStats.tiers.S} A:${crawlerStats.tiers.A} B:${crawlerStats.tiers.B} C:${crawlerStats.tiers.C}) | ` +
         `Win rate: ${(stats.winRate * 100).toFixed(1)}%`
       );
     }, 60 * 1000);
