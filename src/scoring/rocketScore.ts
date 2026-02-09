@@ -69,12 +69,15 @@ export class RocketDetector {
 
     const sTier = buyingWallets.filter((w) => w.tier === WalletTier.S);
     const aTier = buyingWallets.filter((w) => w.tier === WalletTier.A);
+    const bTier = buyingWallets.filter((w) => w.tier === WalletTier.B);
 
     score += sTier.length * 18;
     score += aTier.length * 10;
+    score += bTier.length * 4;
 
     if (sTier.length >= 2) score += 10;
     if (aTier.length >= 2) score += 6;
+    if (bTier.length >= 1 && walletTradeAmountSol >= 0.5) score += 3;
     if (buyingWallets.length >= 3) score += 5;
     if (buyingWallets.length >= 5) score += 5;
 
